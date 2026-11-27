@@ -50,6 +50,7 @@ int IL_interp_segments_2d_parallel(
     int i_cnt;
     int cursegm = 0;
     double smseg;
+    double error_sum = 0.;
     double ***matrix = NULL;
     int **indx = NULL;
     double **b = NULL;
@@ -100,11 +101,12 @@ int IL_interp_segments_2d_parallel(
     cut_tree(tree, all_leafs, &i);
 
     G_message(_("Starting parallel work"));
-#pragma omp parallel firstprivate(                                            \
-        tid, i, j, zmin, zmax, tree, totsegm, offset1, dnorm, smseg, ertot,   \
-            params, info, all_leafs, bitmask, b, indx, matrix, data_local, A) \
-    shared(cursegm, threads, some_thread_failed, zminac, zmaxac, gmin, gmax,  \
-               c1min, c1max, c2min, c2max) default(none)
+#pragma omp parallel firstprivate(                                           \
+        tid, i, j, zmin, zmax, tree, totsegm, offset1, dnorm, smseg, params, \
+            info, all_leafs, bitmask, b, indx, matrix, data_local, A)        \
+    shared(cursegm, threads, some_thread_failed, zminac, zmaxac, gmin, gmax, \
+               c1min, c1max, c2min, c2max, ertot)                            \
+    reduction(+ : error_sum) default(none)
     {
 #pragma omp for schedule(dynamic)
         for (i_cnt = 0; i_cnt < totsegm; i_cnt++) {
@@ -314,7 +316,8 @@ int IL_interp_segments_2d_parallel(
                     if (!params->create_devi) { /* check_points only for one
                                                    time interpolation */
                         params->check_points(params, data_local[tid], b[tid],
-                                             ertot, zmin, dnorm, &target_point);
+                                             &error_sum, zmin, dnorm,
+                                             &target_point);
                     }
                 }
 
@@ -381,8 +384,9 @@ int IL_interp_segments_2d_parallel(
 
                     /* x, y, z is required input, while xmm, ymm, err output*/
                     pointz = target_point.z;
-                    params->check_points(params, data_local[tid], b[tid], ertot,
-                                         zmin, dnorm, &target_point);
+                    params->check_points(params, data_local[tid], b[tid],
+                                         &error_sum, zmin, dnorm,
+                                         &target_point);
 
                     err = target_point.z;
                     target_point.z = pointz + zmin;
@@ -446,6 +450,8 @@ int IL_interp_segments_2d_parallel(
             }
         }
     } /* All threads join master thread and terminate */
+
+    *ertot += error_sum;
 
     for (i_cnt = 0; i_cnt < threads; i_cnt++) {
         G_free(matrix[i_cnt]);
